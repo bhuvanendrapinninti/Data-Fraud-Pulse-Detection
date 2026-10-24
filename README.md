@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # DataPulse — Real-Time Fraud Detection Data Pipeline
 
 Educational data engineering project: Python producer → Kafka → PySpark Structured Streaming → PostgreSQL → Streamlit.
@@ -70,3 +71,6 @@ Kafka partitions and offsets; Spark micro-batches and checkpoints; event time an
 
 ## Extensions
 Add a dead-letter topic for malformed records, rapid-transaction window alerts, Airflow reconciliation, integration tests, and ML evaluation using a labeled dataset.
+=======
+# Data-Fraud-Pulse-Detection
+>>>>>>> origin/main
