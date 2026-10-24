@@ -1,0 +1,96 @@
+services:
+  kafka:
+    image: apache/kafka:3.8.0
+    hostname: kafka
+    ports: ["9092:9092"]
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:29092,CONTROLLER://:29093,EXTERNAL://:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:29092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: frauddb
+      POSTGRES_USER: frauduser
+      POSTGRES_PASSWORD: fraudpass
+    ports: ["5432:5432"]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U frauduser -d frauddb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  producer:
+    build:
+      context: .
+      dockerfile: Dockerfile.app
+    command: ["python", "-u", "producer/transaction_producer.py"]
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_TOPIC: transactions
+      EVENTS_PER_SECOND: "5"
+      FRAUD_RATE: "0.08"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+  processor:
+    build:
+      context: .
+      dockerfile: Dockerfile.spark
+    command: ["spark-submit", "--master", "local[*]", "--packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3", "/app/processor/stream_processor.py"]
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_TOPIC: transactions
+      CHECKPOINT_LOCATION: /checkpoints/fraud-stream
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: frauddb
+      DB_USER: frauduser
+      DB_PASSWORD: fraudpass
+      FRAUD_AMOUNT_THRESHOLD: "50000"
+      RAPID_TXN_COUNT: "5"
+      RAPID_WINDOW_SECONDS: "60"
+    volumes:
+      - spark_checkpoints:/checkpoints
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.app
+    command: ["streamlit", "run", "dashboard/app.py", "--server.address=0.0.0.0", "--server.port=8501"]
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: frauddb
+      DB_USER: frauduser
+      DB_PASSWORD: fraudpass
+    ports: ["8501:8501"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+volumes:
+  postgres_data:
+  spark_checkpoints:
